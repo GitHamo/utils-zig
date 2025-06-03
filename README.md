@@ -3,11 +3,54 @@
 **Prerequisites:** MySQL 8.0.1+ installed on the machine that will run the build.
 
 
+## Modules Setup
+
+1. in terminal run the following command:
+
+```bash
+zig fetch https://github.com/GitHamo/utils-zig/archive/refs/heads/main.tar.gz --save
+```
+2. in build.zig add the dependancies you want to include to your project. Example: MySQL driver.
+
+
+```zig
+
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+    const zig_utils = b.dependency("zig_utils", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const exe_mod = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    exe_mod.addImport("mysql", zig_utils.module("mysql_mod"));
+
+    const exe = b.addExecutable(.{
+        .name = "traffic-controller",
+        .root_module = exe_mod,
+    });
+
+    exe.linkLibC(); // very important
+
+    b.installArtifact(exe);
+
+```
+
+- It is **IMPORTANT** to add `exe.linkLibC();` to your executable
+
 ## MySQL Driver: Install & Usage
 
 ```zig
 
-// setup
+// install in project
+
+const mysqlib = @import("mysql");
 
 var driver = mysqlib.MySQLDriver.init(allocator: std.mem.Allocator);
 defer driver.deinit();
