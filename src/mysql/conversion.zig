@@ -14,42 +14,40 @@ const ConversionError = error{
 /// allocator: Memory allocator for the result array
 /// result: QueryResult containing the data rows
 /// Returns: Allocated slice of structs (caller owns memory)
-pub fn convertQueryResult(comptime T: type, allocator: Allocator, result: anytype) ![]T {
+pub fn convert(comptime T: type, allocator: Allocator, result: anytype) ![]T {
     const type_info = @typeInfo(T);
     if (type_info != .@"struct") {
         @compileError("Target type must be a struct");
     }
-    
+
     const fields = std.meta.fields(T);
 
-    // Allocate array for results
     var converted_rows = try allocator.alloc(T, result.rows.len);
     errdefer allocator.free(converted_rows);
-    
+
     for (result.rows, 0..) |row, row_idx| {
         if (row.len != fields.len) {
             std.debug.print("Error: Row {d} has {d} columns, expected {d}\n", .{ row_idx, row.len, fields.len });
             return ConversionError.InvalidFieldCount;
         }
-        
+
         var struct_instance: T = undefined;
-        
-        // Use inline for to iterate over struct fields at compile time
+
         inline for (fields, 0..) |field, field_idx| {
             const field_value = try convertField(field.type, row[field_idx], allocator);
             @field(struct_instance, field.name) = field_value;
         }
-        
+
         converted_rows[row_idx] = struct_instance;
     }
-    
+
     return converted_rows;
 }
 
 /// Converts a string value to the target field type
 fn convertField(comptime FieldType: type, value: []const u8, allocator: Allocator) !FieldType {
     const type_info = @typeInfo(FieldType);
-    
+
     switch (type_info) {
         .pointer => |ptr_info| {
             if (ptr_info.child == u8 and ptr_info.size == .slice) {
@@ -84,16 +82,18 @@ fn convertField(comptime FieldType: type, value: []const u8, allocator: Allocato
             // Handle various boolean representations
             const lower_value = std.ascii.allocLowerString(allocator, value) catch return ConversionError.OutOfMemory;
             defer allocator.free(lower_value);
-            
-            if (std.mem.eql(u8, lower_value, "true") or 
-                std.mem.eql(u8, lower_value, "1") or 
-                std.mem.eql(u8, lower_value, "yes") or 
-                std.mem.eql(u8, lower_value, "on")) {
+
+            if (std.mem.eql(u8, lower_value, "true") or
+                std.mem.eql(u8, lower_value, "1") or
+                std.mem.eql(u8, lower_value, "yes") or
+                std.mem.eql(u8, lower_value, "on"))
+            {
                 return true;
-            } else if (std.mem.eql(u8, lower_value, "false") or 
-                       std.mem.eql(u8, lower_value, "0") or 
-                       std.mem.eql(u8, lower_value, "no") or 
-                       std.mem.eql(u8, lower_value, "off")) {
+            } else if (std.mem.eql(u8, lower_value, "false") or
+                std.mem.eql(u8, lower_value, "0") or
+                std.mem.eql(u8, lower_value, "no") or
+                std.mem.eql(u8, lower_value, "off"))
+            {
                 return false;
             } else {
                 return ConversionError.ParseError;
@@ -116,10 +116,9 @@ fn convertField(comptime FieldType: type, value: []const u8, allocator: Allocato
 /// T: The struct type
 /// allocator: The allocator used to create the structs
 /// structs: The array of structs to free
-pub fn freeConvertedResult(comptime T: type, allocator: Allocator, structs: []T) void {
-    // const type_info = @typeInfo(T);
+pub fn free(comptime T: type, allocator: Allocator, structs: []T) void {
     const fields = std.meta.fields(T);
-    // Free string fields in each struct
+
     for (structs) |item| {
         inline for (fields) |field| {
             const field_type_info = @typeInfo(field.type);
@@ -149,11 +148,9 @@ pub fn freeConvertedResult(comptime T: type, allocator: Allocator, structs: []T)
             }
         }
     }
-    
-    // Free the array itself
+
     allocator.free(structs);
 }
-
 
 //////////////////////////////////////////////
 //////////////// TESTS ///////////////////////
@@ -204,28 +201,28 @@ const AllOptionalStruct = struct {
 
 test "convertQueryResult - successful conversion with simple struct" {
     const allocator = testing.allocator;
-    
+
     const rows = [_][]const []const u8{
         &[_][]const u8{ "1", "Alice", "true" },
         &[_][]const u8{ "2", "Bob", "false" },
         &[_][]const u8{ "3", "Charlie", "1" },
     };
-    
+
     const mock_result = MockQueryResult{ .rows = rows[0..] };
-    
-    const converted = try convertQueryResult(SimpleStruct, allocator, mock_result);
-    defer freeConvertedResult(SimpleStruct, allocator, converted);
-    
+
+    const converted = try convert(SimpleStruct, allocator, mock_result);
+    defer free(SimpleStruct, allocator, converted);
+
     try testing.expect(converted.len == 3);
-    
+
     try testing.expect(converted[0].id == 1);
     try testing.expectEqualStrings("Alice", converted[0].name);
     try testing.expect(converted[0].active == true);
-    
+
     try testing.expect(converted[1].id == 2);
     try testing.expectEqualStrings("Bob", converted[1].name);
     try testing.expect(converted[1].active == false);
-    
+
     try testing.expect(converted[2].id == 3);
     try testing.expectEqualStrings("Charlie", converted[2].name);
     try testing.expect(converted[2].active == true);
@@ -233,19 +230,19 @@ test "convertQueryResult - successful conversion with simple struct" {
 
 test "convertQueryResult - complex struct with optionals" {
     const allocator = testing.allocator;
-    
+
     const rows = [_][]const []const u8{
         &[_][]const u8{ "100", "Product A", "95.5", "50", "true", "Best product", "4.8", "1" },
         &[_][]const u8{ "200", "Product B", "87.2", "25", "false", "", "", "0" },
     };
-    
+
     const mock_result = MockQueryResult{ .rows = rows[0..] };
-    
-    const converted = try convertQueryResult(ComplexStruct, allocator, mock_result);
-    defer freeConvertedResult(ComplexStruct, allocator, converted);
-    
+
+    const converted = try convert(ComplexStruct, allocator, mock_result);
+    defer free(ComplexStruct, allocator, converted);
+
     try testing.expect(converted.len == 2);
-    
+
     // First row - all fields populated
     try testing.expect(converted[0].id == 100);
     try testing.expectEqualStrings("Product A", converted[0].name);
@@ -258,7 +255,7 @@ test "convertQueryResult - complex struct with optionals" {
     try testing.expectApproxEqRel(converted[0].rating.?, 4.8, 0.001);
     try testing.expect(converted[0].flag != null);
     try testing.expect(converted[0].flag.? == true);
-    
+
     // Second row - some empty fields
     try testing.expect(converted[1].id == 200);
     try testing.expectEqualStrings("Product B", converted[1].name);
@@ -273,19 +270,19 @@ test "convertQueryResult - complex struct with optionals" {
 
 test "convertQueryResult - all numeric types" {
     const allocator = testing.allocator;
-    
+
     const rows = [_][]const []const u8{
         &[_][]const u8{ "127", "32767", "2147483647", "9223372036854775807", "255", "65535", "4294967295", "18446744073709551615", "3.14", "2.718281828" },
         &[_][]const u8{ "-128", "-32768", "-2147483648", "-9223372036854775808", "0", "0", "0", "0", "-1.5", "-10.25" },
     };
-    
+
     const mock_result = MockQueryResult{ .rows = rows[0..] };
-    
-    const converted = try convertQueryResult(NumericStruct, allocator, mock_result);
-    defer freeConvertedResult(NumericStruct, allocator, converted);
-    
+
+    const converted = try convert(NumericStruct, allocator, mock_result);
+    defer free(NumericStruct, allocator, converted);
+
     try testing.expect(converted.len == 2);
-    
+
     // First row - max values
     try testing.expect(converted[0].int8_field == 127);
     try testing.expect(converted[0].int16_field == 32767);
@@ -297,7 +294,7 @@ test "convertQueryResult - all numeric types" {
     try testing.expect(converted[0].uint64_field == 18446744073709551615);
     try testing.expectApproxEqRel(converted[0].float32_field, 3.14, 0.001);
     try testing.expectApproxEqRel(converted[0].float64_field, 2.718281828, 0.000001);
-    
+
     // Second row - min/zero values
     try testing.expect(converted[0].int8_field == 127);
     try testing.expect(converted[1].int8_field == -128);
@@ -314,7 +311,7 @@ test "convertQueryResult - all numeric types" {
 
 test "convertQueryResult - boolean variations" {
     const allocator = testing.allocator;
-    
+
     const BoolStruct = struct {
         b1: bool,
         b2: bool,
@@ -325,19 +322,19 @@ test "convertQueryResult - boolean variations" {
         b7: bool,
         b8: bool,
     };
-    
+
     const rows = [_][]const []const u8{
         &[_][]const u8{ "true", "TRUE", "1", "yes", "false", "FALSE", "0", "no" },
         &[_][]const u8{ "on", "ON", "True", "Yes", "off", "OFF", "False", "No" },
     };
-    
+
     const mock_result = MockQueryResult{ .rows = rows[0..] };
-    
-    const converted = try convertQueryResult(BoolStruct, allocator, mock_result);
-    defer freeConvertedResult(BoolStruct, allocator, converted);
-    
+
+    const converted = try convert(BoolStruct, allocator, mock_result);
+    defer free(BoolStruct, allocator, converted);
+
     try testing.expect(converted.len == 2);
-    
+
     // First row
     try testing.expect(converted[0].b1 == true);
     try testing.expect(converted[0].b2 == true);
@@ -347,7 +344,7 @@ test "convertQueryResult - boolean variations" {
     try testing.expect(converted[0].b6 == false);
     try testing.expect(converted[0].b7 == false);
     try testing.expect(converted[0].b8 == false);
-    
+
     // Second row
     try testing.expect(converted[1].b1 == true);
     try testing.expect(converted[1].b2 == true);
@@ -361,25 +358,25 @@ test "convertQueryResult - boolean variations" {
 
 test "convertQueryResult - empty values and optionals" {
     const allocator = testing.allocator;
-    
+
     const rows = [_][]const []const u8{
         &[_][]const u8{ "", "", "", "" },
         &[_][]const u8{ "42", "test", "3.14", "true" },
     };
-    
+
     const mock_result = MockQueryResult{ .rows = &rows };
-    
-    const converted = try convertQueryResult(AllOptionalStruct, allocator, mock_result);
-    defer freeConvertedResult(AllOptionalStruct, allocator, converted);
-    
+
+    const converted = try convert(AllOptionalStruct, allocator, mock_result);
+    defer free(AllOptionalStruct, allocator, converted);
+
     try testing.expect(converted.len == 2);
-    
+
     // First row - all null/empty
     try testing.expect(converted[0].id == null);
     try testing.expect(converted[0].name == null);
     try testing.expect(converted[0].score == null);
     try testing.expect(converted[0].active == null);
-    
+
     // Second row - all populated
     try testing.expect(converted[1].id != null);
     try testing.expect(converted[1].id.? == 42);
@@ -393,97 +390,97 @@ test "convertQueryResult - empty values and optionals" {
 
 test "convertQueryResult - empty rows" {
     const allocator = testing.allocator;
-    
+
     const rows: [][]const []const u8 = &[_][]const []const u8{};
     const mock_result = MockQueryResult{ .rows = rows };
-    
-    const converted = try convertQueryResult(SimpleStruct, allocator, mock_result);
-    defer freeConvertedResult(SimpleStruct, allocator, converted);
-    
+
+    const converted = try convert(SimpleStruct, allocator, mock_result);
+    defer free(SimpleStruct, allocator, converted);
+
     try testing.expect(converted.len == 0);
 }
 
 test "convertQueryResult - field count mismatch error" {
     const allocator = testing.allocator;
-    
+
     const rows = [_][]const []const u8{
         &[_][]const u8{ "1", "Alice" }, // Missing third field
     };
-    
+
     const mock_result = MockQueryResult{ .rows = rows[0..] };
-    
-    const result = convertQueryResult(SimpleStruct, allocator, mock_result);
+
+    const result = convert(SimpleStruct, allocator, mock_result);
     try testing.expectError(ConversionError.InvalidFieldCount, result);
 }
 
 test "convertQueryResult - integer parse error" {
     const allocator = testing.allocator;
-    
+
     const rows = [_][]const []const u8{
         &[_][]const u8{ "not_a_number", "Alice", "true" },
     };
-    
+
     const mock_result = MockQueryResult{ .rows = rows[0..] };
-    
-    const result = convertQueryResult(SimpleStruct, allocator, mock_result);
+
+    const result = convert(SimpleStruct, allocator, mock_result);
     try testing.expectError(ConversionError.ParseError, result);
 }
 
 test "convertQueryResult - float parse error" {
     const allocator = testing.allocator;
-    
+
     const FloatStruct = struct {
         value: f64,
     };
-    
+
     const rows = [_][]const []const u8{
         &[_][]const u8{"not_a_float"},
     };
-    
+
     const mock_result = MockQueryResult{ .rows = rows[0..] };
-    
-    const result = convertQueryResult(FloatStruct, allocator, mock_result);
+
+    const result = convert(FloatStruct, allocator, mock_result);
     try testing.expectError(ConversionError.ParseError, result);
 }
 
 test "convertQueryResult - boolean parse error" {
     const allocator = testing.allocator;
-    
+
     const BoolStruct = struct {
         flag: bool,
     };
-    
+
     const rows = [_][]const []const u8{
         &[_][]const u8{"maybe"},
     };
-    
+
     const mock_result = MockQueryResult{ .rows = rows[0..] };
-    
-    const result = convertQueryResult(BoolStruct, allocator, mock_result);
+
+    const result = convert(BoolStruct, allocator, mock_result);
     try testing.expectError(ConversionError.ParseError, result);
 }
 
 test "convertQueryResult - unsupported type error" {
     const allocator = testing.allocator;
-    
+
     const UnsupportedStruct = struct {
         data: []i32, // Slice of integers is not supported
     };
-    
+
     const rows = [_][]const []const u8{
         &[_][]const u8{"123"},
     };
-    
+
     const mock_result = MockQueryResult{ .rows = rows[0..] };
-    
-    const result = convertQueryResult(UnsupportedStruct, allocator, mock_result);
+
+    const result = convert(UnsupportedStruct, allocator, mock_result);
     try testing.expectError(ConversionError.UnsupportedType, result);
 }
 
 test "convertQueryResult - non-struct type compile error" {
     // This test verifies that the compile-time check works
     // It should fail at compile time, not runtime
-    
+
     // Uncommenting the following lines should cause a compile error:
     // const allocator = testing.allocator;
     // const rows: [][]const []const u8 = &[_][]const []const u8{};
@@ -493,19 +490,19 @@ test "convertQueryResult - non-struct type compile error" {
 
 test "convertField - empty values default handling" {
     const allocator = testing.allocator;
-    
+
     // Test integer default (0)
     const int_result = try convertField(i32, "", allocator);
     try testing.expect(int_result == 0);
-    
+
     // Test float default (0.0)
     const float_result = try convertField(f64, "", allocator);
     try testing.expect(float_result == 0.0);
-    
+
     // Test bool default (false)
     const bool_result = try convertField(bool, "", allocator);
     try testing.expect(bool_result == false);
-    
+
     // Test optional default (null)
     const opt_result = try convertField(?i32, "", allocator);
     try testing.expect(opt_result == null);
@@ -513,11 +510,11 @@ test "convertField - empty values default handling" {
 
 test "convertField - string duplication" {
     const allocator = testing.allocator;
-    
+
     const original = "test string";
     const result = try convertField([]const u8, original, allocator);
     defer allocator.free(result);
-    
+
     try testing.expectEqualStrings(original, result);
     // Verify it's a different memory location (duplication worked)
     try testing.expect(result.ptr != original.ptr);
@@ -525,55 +522,55 @@ test "convertField - string duplication" {
 
 test "freeConvertedResult - memory cleanup" {
     const allocator = testing.allocator;
-    
+
     const rows = [_][]const []const u8{
         &[_][]const u8{ "1", "Alice" },
         &[_][]const u8{ "2", "Bob" },
     };
-    
+
     const StringStruct = struct {
         id: i32,
         name: []const u8,
     };
-    
+
     const mock_result = MockQueryResult{ .rows = &rows };
-    
-    const converted = try convertQueryResult(StringStruct, allocator, mock_result);
-    
+
+    const converted = try convert(StringStruct, allocator, mock_result);
+
     // This test mainly verifies that freeConvertedResult doesn't crash
     // Memory leak detection would be handled by the test runner
-    freeConvertedResult(StringStruct, allocator, converted);
+    free(StringStruct, allocator, converted);
 }
 
 test "freeConvertedResult - with optionals" {
     const allocator = testing.allocator;
-    
+
     const rows = [_][]const []const u8{
         &[_][]const u8{ "1", "Alice", "Bob" },
         &[_][]const u8{ "2", "", "Charlie" },
     };
-    
+
     const OptionalStringStruct = struct {
         id: i32,
         name: ?[]const u8,
         description: []const u8,
     };
-    
+
     const mock_result = MockQueryResult{ .rows = &rows };
-    
-    const converted = try convertQueryResult(OptionalStringStruct, allocator, mock_result);
-    
+
+    const converted = try convert(OptionalStringStruct, allocator, mock_result);
+
     // Verify content before cleanup
     try testing.expect(converted[0].name != null);
     try testing.expectEqualStrings("Alice", converted[0].name.?);
     try testing.expect(converted[1].name == null);
-    
-    freeConvertedResult(OptionalStringStruct, allocator, converted);
+
+    free(OptionalStringStruct, allocator, converted);
 }
 
 test "integration - realistic database simulation" {
     const allocator = testing.allocator;
-    
+
     const User = struct {
         id: i32,
         username: []const u8,
@@ -584,20 +581,20 @@ test "integration - realistic database simulation" {
         bio: ?[]const u8,
         rating: ?f32,
     };
-    
+
     const rows = [_][]const []const u8{
         &[_][]const u8{ "1", "john_doe", "john@example.com", "30", "75000.50", "true", "Software engineer with 5 years experience", "4.5" },
         &[_][]const u8{ "2", "jane_smith", "jane@test.com", "25", "65000.00", "true", "", "" },
         &[_][]const u8{ "3", "bob_wilson", "bob@company.org", "45", "95000.75", "false", "Senior developer", "3.8" },
     };
-    
+
     const mock_result = MockQueryResult{ .rows = &rows };
-    
-    const users = try convertQueryResult(User, allocator, mock_result);
-    defer freeConvertedResult(User, allocator, users);
-    
+
+    const users = try convert(User, allocator, mock_result);
+    defer free(User, allocator, users);
+
     try testing.expect(users.len == 3);
-    
+
     // Verify first user
     try testing.expect(users[0].id == 1);
     try testing.expectEqualStrings("john_doe", users[0].username);
@@ -609,13 +606,13 @@ test "integration - realistic database simulation" {
     try testing.expectEqualStrings("Software engineer with 5 years experience", users[0].bio.?);
     try testing.expect(users[0].rating != null);
     try testing.expectApproxEqRel(users[0].rating.?, 4.5, 0.001);
-    
+
     // Verify second user (with null optionals)
     try testing.expect(users[1].id == 2);
     try testing.expectEqualStrings("jane_smith", users[1].username);
     try testing.expect(users[1].bio == null);
     try testing.expect(users[1].rating == null);
-    
+
     // Verify third user
     try testing.expect(users[2].id == 3);
     try testing.expect(users[2].is_active == false);

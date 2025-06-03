@@ -1,8 +1,15 @@
-## install mysql driver
+## Setup
 
-```
+**Prerequisites:** MySQL 8.0.1+ installed on the machine that will run the build.
 
-var driver = mysqlib.MySQLDriver.init(allocator);
+
+## MySQL Driver: Install & Usage
+
+```zig
+
+// setup
+
+var driver = mysqlib.MySQLDriver.init(allocator: std.mem.Allocator);
 defer driver.deinit();
 
 try driver.connect(.{
@@ -13,37 +20,47 @@ try driver.connect(.{
     .port = 3306,
 });
 
-```
+// usage
 
+// example: for results without any parameter binding
+var resultsOne = try driver.execute("YOUR QUERY", null);
 
-## use mysql driver
-
-```
-var results = try driver.execute("YOUR QUERY", null);
-if (results) |*result| {
+if (resultsOne) |*result| {
     defer result.deinit();
+
+    // option 1: loop through results in case of select
     for(result.rows, 0..) |row, i| {
         std.debug.print("Row {d}: {s}\n", .{i, row});
     }
 }
-```
 
-## conver results into struct
 
-```
+// example: for results without any parameter binding
+const query_string = "SELECT col1, col2 FROM table1 WHERE col3 = ? AND col4 = ? AND col5 = ? LIMIT ?";
+const select_params = [_]QueryParameter{
+    QueryParameter.fromString("string"),
+    QueryParameter.fromFloat(45.6),
+    QueryParameter.fromNull(),
+    QueryParameter.fromInt(123),
+};
+var resultsTwo = try driver.execute(query_string, &select_params);
+
 const RowModel = struct {
-    property: type,
+    propertyOne: type,
+    propertyTwo: type,
 };
 
-var results = try driver.execute("YOUR QUERY", null);
-if (results) |*result| {
+if (resultsTwo) |*result| {
     defer result.deinit();
 
-    const rowModels = mysqlib.Converter.convertQueryResult(RowModel, allocator, result) catch |err| {
+    // option 2: convert returned results into a struct of desire
+    const rowModels = mysqlib.ResultConverter.convert(RowModel, allocator, result) catch |err| {
         std.debug.print("Conversion failed: {}\n", .{err});
         return;
     };
-    defer mysqlib.Converter.freeConvertedResult(Endpoint, allocator, rowModels);
 
+    defer mysqlib.ResultConverter.free(Endpoint, allocator, rowModels);
 }
+
+
 ```
